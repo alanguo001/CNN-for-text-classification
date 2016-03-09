@@ -80,3 +80,5 @@ def RoB_CNN():
     #cnn.train(X_train, y_train, X_val=None, y_val=None
 
 
+if __name__ == '__main__':
+    RoB_CNN()
