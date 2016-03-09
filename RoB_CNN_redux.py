@@ -75,7 +75,7 @@ def RoB_CNN():
 
     cnn = CNN_text.TextCNN(p, filters=[2,3,5], n_filters=100, dropout=0.0)
 
-    cnn.train(train_X, y_train)
+    cnn.train(train_X, y_train, X_val=test_X, y_val=y_test)
     #cnn.initialize_sequences_and_vocab(all_docs)
     #cnn.train(X_train, y_train, X_val=None, y_val=None
 
