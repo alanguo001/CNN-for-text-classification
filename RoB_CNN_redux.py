@@ -3,6 +3,9 @@ import sys
 import os 
 csv.field_size_limit(sys.maxsize)
 
+import sklearn 
+from sklearn.metrics import accuracy_score
+
 import pandas as pd 
 import numpy as np 
 
