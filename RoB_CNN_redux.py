@@ -80,9 +80,10 @@ def RoB_CNN(total_epochs=100):
         cnn.train(train_X, y_train, nb_epochs=epochs_per_iter)#, X_val=test_X, y_val=y_test)
         epochs_so_far += epochs_per_iter
         
-        y_hat = cnn.predict(test_X)
-        import pdb; pdb.set_trace()
-        print("acc")
+        yhat = cnn.predict(test_X)
+        #import pdb; pdb.set_trace()
+        print("acc @ epoch %s: %s" % (epochs_so_far, accuracy_score(y_test, yhat)))
+
     #cnn.initialize_sequences_and_vocab(all_docs)
     #cnn.train(X_train, y_train, X_val=None, y_val=None
 
