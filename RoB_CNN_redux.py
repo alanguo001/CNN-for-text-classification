@@ -48,7 +48,7 @@ def read_RoB_data(path="RoB-data/train-Xy-Random-sequence-generation.txt",
 
 
 
-def RoB_CNN():
+def RoB_CNN(total_epochs=100):
     train_docs, y_train = read_RoB_data(path="RoB-data/train-Xy-Random-sequence-generation.txt", 
                                         y_tuples=False)
    
@@ -74,10 +74,20 @@ def RoB_CNN():
 
     cnn = CNN_text.TextCNN(p, filters=[2,3,5], n_filters=100, dropout=0.0)
 
-    cnn.train(train_X, y_train, X_val=test_X, y_val=y_test)
+    epochs_per_iter = 10
+    epochs_so_far = 0
+    while epochs_so_far < total_epochs:
+        cnn.train(train_X, y_train, nb_epochs=epochs_per_iter)#, X_val=test_X, y_val=y_test)
+        epochs_so_far += epochs_per_iter
+        
+        y_hat = cnn.predict(test_X)
+        import pdb; pdb.set_trace()
+        print("acc")
     #cnn.initialize_sequences_and_vocab(all_docs)
     #cnn.train(X_train, y_train, X_val=None, y_val=None
 
 
+# note that on TACC you need:
+#    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/apps/intel14/hdf5/1.8.12/x86_64/lib/
 if __name__ == '__main__':
     RoB_CNN()
