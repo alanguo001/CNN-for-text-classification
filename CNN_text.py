@@ -49,7 +49,7 @@ class TextCNN:
 
     
     def train(self, X_train, y_train, X_val=None, y_val=None,
-                nb_epoch=5, batch_size=32, optimizer='rmsprop'):
+                nb_epoch=5, batch_size=32, optimizer='adam'):
         ''' 
         Accepts an X matrix (presumably some slice of self.X) and corresponding
         vector of labels. May want to revisit this. 
@@ -57,17 +57,23 @@ class TextCNN:
         X_val and y_val are to be used to validate during training. 
         '''
         self.build_model() # re-build model
-        self.model.compile(loss={'output': 'binary_crossentropy'}, optimizer=optimizer)
+        self.model.compile(loss={'output': 'binary_crossentropy'}, 
+                                optimizer=optimizer)
+
+        checkpointer = ModelCheckpoint(filepath="weights.hdf5", 
+                                       verbose=1, 
+                                       save_best_only=(X_val is not None))
 
         if X_val is not None:
             self.model.fit({'input': X_train, 'output': y_train},
                 batch_size=batch_size, nb_epoch=nb_epoch,
-                validation_data={'input': X_val, 'output': y_val})
+                validation_data={'input': X_val, 'output': y_val},
+                verbose=2, callbacks=[checkpointer])
         else: 
             print("no validation data provided!")
             self.model.fit({'input': X_train, 'output': y_train},
-                batch_size=batch_size, nb_epoch=nb_epoch)
-
+                batch_size=batch_size, nb_epoch=nb_epoch, 
+                verbose=2, callbacks=[checkpointer])
         
 
     def predictions(X_test, batch_size=32, binarize=False):

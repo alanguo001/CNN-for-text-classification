@@ -56,15 +56,14 @@ def RoB_CNN():
                                         y_tuples=False)
 
     
-    # TMP TMP TMP
-    train_docs = train_docs[:500]
-    y_train = y_train[:500]
+    train_docs = train_docs#[:500]
+    y_train = y_train#[:500]
 
     wvs = load_trained_w2v_model()
     # preprocessor for texts
 
     # then the CNN
-    p = CNN_text.Preprocessor(max_features=20000, maxlen=5000, wvs=wvs)
+    p = CNN_text.Preprocessor(max_features=10000, maxlen=5000, wvs=wvs)
     all_docs = train_docs + test_docs
     
     print("preprocessing...")
