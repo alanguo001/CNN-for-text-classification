@@ -48,6 +48,7 @@ class TextCNN:
         self.nb_filter = n_filters 
         self.dropout = dropout
 
+        self.build_model() # build model
     
     def train(self, X_train, y_train, X_val=None, y_val=None,
                 nb_epoch=5, batch_size=32, optimizer='adam'):
@@ -57,7 +58,6 @@ class TextCNN:
 
         X_val and y_val are to be used to validate during training. 
         '''
-        self.build_model() # re-build model
         self.model.compile(loss={'output': 'binary_crossentropy'}, 
                                 optimizer=optimizer)
 
