@@ -77,9 +77,11 @@ class TextCNN:
                 verbose=2, callbacks=[checkpointer])
         
 
-    def predictions(X_test, batch_size=32, binarize=False):
-        raw_preds = np.array(self.model.predict({'input': X_test}, 
-                                  batch_size=batch_size)['output'])
+    def predict(self, X_test, batch_size=32, binarize=False):
+        raw_preds = self.model.predict({'input': test_X}, batch_size=batch_size)['output']
+
+        #np.array(self.model.predict({'input': X_test}, 
+                    #              batch_size=batch_size)['output'])
         if binarize:
           return np.round(raw_preds)
         return raw_preds
