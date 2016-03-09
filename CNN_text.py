@@ -28,6 +28,7 @@ from keras.layers.convolutional import Convolution1D, MaxPooling1D
 from keras.datasets import imdb
 from keras.utils.np_utils import accuracy
 from keras.preprocessing.text import text_to_word_sequence, Tokenizer
+from keras.callbacks import ModelCheckpoint
 
 class TextCNN:
 
