@@ -51,7 +51,7 @@ def read_RoB_data(path="RoB-data/train-Xy-Random-sequence-generation.txt",
 
 
 
-def RoB_CNN(total_epochs=100):
+def RoB_CNN(total_epochs=60):
     train_docs, y_train = read_RoB_data(path="RoB-data/train-Xy-Random-sequence-generation.txt", 
                                         y_tuples=False)
    
