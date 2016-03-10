@@ -51,7 +51,7 @@ def read_RoB_data(path="RoB-data/train-Xy-Random-sequence-generation.txt",
 
 
 
-def RoB_CNN(total_epochs=60):
+def RoB_CNN(total_epochs=60, weights_file=None):
     train_docs, y_train = read_RoB_data(path="RoB-data/train-Xy-Random-sequence-generation.txt", 
                                         y_tuples=False)
    
@@ -76,6 +76,14 @@ def RoB_CNN(total_epochs=60):
     
 
     cnn = CNN_text.TextCNN(p, filters=[2,3,5], n_filters=100, dropout=0.0)
+
+    # write the model out
+    json_string = cnn.model.to_json()
+    open('RoB_model_architecture.json', 'w').write(json_string)
+    print("dumped model!")
+
+    if weights_file:
+        cnn.model.load_weights('weights.hdf5')
 
     epochs_per_iter = 10
     epochs_so_far = 0
