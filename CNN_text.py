@@ -58,8 +58,7 @@ class TextCNN:
 
         X_val and y_val are to be used to validate during training. 
         '''
-        self.model.compile(loss={'output': 'binary_crossentropy'}, 
-                                optimizer=optimizer)
+
 
         checkpointer = ModelCheckpoint(filepath="weights.hdf5", 
                                        verbose=1, 
@@ -120,7 +119,8 @@ class TextCNN:
         self.model.add_output(name='output', input='sigmoid')
         print("model built")
         print(self.model.summary())
-
+        self.model.compile(loss={'output': 'binary_crossentropy'}, 
+                                optimizer="adam")#optimizer)
 
 class Preprocessor:
     def __init__(self, max_features, maxlen, embedding_dims=200, wvs=None):
