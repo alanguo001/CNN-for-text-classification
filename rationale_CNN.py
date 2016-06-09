@@ -242,16 +242,31 @@ class RationaleCNN:
         conv_f = K.function(
                         [self.sentence_model.layers[0].input, K.learning_phase()], 
                         [self.sentence_model.layers[-2].output])
+        
+        X = []
+
+        for d in train_documents:
+            sentence_vectors = np.matrix([conv_f([np.matrix(sent_seq),1])[0][0] for 
+                                sent_seq in d.sentence_sequences])
+
+            #sentence_predictions = self.sentence_model.predict(d.sentence_sequences)
+            sentence_predictions = r_CNN.sentence_model.predict(d.sentence_sequences)
+            weights = np.amax(sentence_predictions[:,0:2],axis=1)
+            weighted = np.dot(weights, sentence_vectors)
+            X.append(weighted)
+        #train_sequences = 
+
+        X = np.vstack(X)
+        
+        input_layer = Dense(1, input_shape=X.shape)(X)
+        output_layer = Activation('sigmoid')(input_layer)
+
+        self.document_model.compile(loss='binary_crossentropy', optimizer="adam")
 
         
-        
+        # then the model is simple; just 
 
-        sentence_vectors = conv_f([X,1])[0]
-
-        sentence_predictions = sentence_model.predict([test_sentences])
-        weights = np.amax(sentence_predictions[:,0:2],axis=1)
-
-        return np.matrix(np.dot(weights, vecs))
+        #return np.matrix(np.dot(weights, vecs))
 
     def build_doc_model3(self):
         model = Sequential()
