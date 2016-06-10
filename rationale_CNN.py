@@ -36,7 +36,7 @@ from keras.callbacks import ModelCheckpoint
 
 ##
 from keras.layers import Input, Embedding, Dense, merge
-from keras.models import Model
+from keras.models import Model, Sequential
 
 from keras import backend as K 
 
@@ -231,6 +231,8 @@ class RationaleCNN:
         print(self.sentence_model.summary())
         self.sentence_model.compile(loss='categorical_crossentropy', optimizer="adam")
 
+        self.sentence_embedding_dim = self.sentence_model.layers[-2].output_shape[1]
+
         return self.sentence_model 
 
 
@@ -238,39 +240,154 @@ class RationaleCNN:
         pass 
 
 
-    def build_doc_model_fixed(self, train_documents):
+
+    def build_doc_model_fixed(self):
+        # no magic here.
+        #input_layer = Dense(1, batch_input_shape=(None, self.sentence_embedding_dim))#input_shape=(self.sentence_embedding_dim, ))
+        #output_layer = Activation('sigmoid')(input_layer)
+
+        self.document_model = Sequential() 
+        self.document_model.add(Dense(1, input_dim=self.sentence_embedding_dim))
+        self.document_model.add(Activation("sigmoid"))
+
+        #self.document_model = Model(input=tokens_input, output=output)
+        self.document_model.compile(loss='binary_crossentropy', optimizer="adam")
+
+
+    def train_doc_model_fixed(self, train_documents):
         conv_f = K.function(
                         [self.sentence_model.layers[0].input, K.learning_phase()], 
                         [self.sentence_model.layers[-2].output])
         
-        X = []
+        X, y = [], []
 
         for d in train_documents:
             sentence_vectors = np.matrix([conv_f([np.matrix(sent_seq),1])[0][0] for 
                                 sent_seq in d.sentence_sequences])
 
             #sentence_predictions = self.sentence_model.predict(d.sentence_sequences)
-            sentence_predictions = r_CNN.sentence_model.predict(d.sentence_sequences)
+            sentence_predictions = self.sentence_model.predict(d.sentence_sequences)
             weights = np.amax(sentence_predictions[:,0:2],axis=1)
             weighted = np.dot(weights, sentence_vectors)
             X.append(weighted)
+            y.append(d.doc_y)
         #train_sequences = 
 
         X = np.vstack(X)
+        y = np.array(y)
+        #import pdb; pdb.set_trace()
+        self.document_model.fit(X, y)
         
-        input_layer = Dense(1, input_shape=X.shape)(X)
-        output_layer = Activation('sigmoid')(input_layer)
-
-        self.document_model.compile(loss='binary_crossentropy', optimizer="adam")
-
-        
-        # then the model is simple; just 
 
         #return np.matrix(np.dot(weights, vecs))
+
+    def train_document_model(self, train_documents, 
+                                nb_epoch=5, downsample=True, 
+                                batch_size=128, optimizer='adam'):
+        # assumes sentence sequences have been generated!
+        assert(train_documents[0].sentence_sequences is not None)
+
+        X, y= [], []
+        # flatten sentences/sentence labels
+        for d in train_documents:
+            X.extend(d.sentence_sequences)
+            y.extend(d.sentences_y)
+
+        # @TODO sub-sample magic?
+        X, y = np.asarray(X), np.asarray(y)
+        
+        # downsample
+        if downsample:
+            X, y = RationaleCNN.balanced_sample(X, y)
+
+        #self.train(X[:1000], y[:1000])
+        self.train(X, y)
+
+        self.sentence_model_trained = True
+
+
+    def build_doc_model_concat(self):
+        # the idea is here is to concatenate the sentence inputs; so represent each document
+        # by one very long row
+        doc_len = self.preprocessor.max_sent_len * self.preprocessor.max_doc_len
+        tokens_input = Input(name='input', 
+                            shape=(doc_len,), dtype='int32')
+
+        x = Embedding(self.preprocessor.max_features, self.preprocessor.embedding_dims, 
+                      input_length=doc_len, 
+                      weights=self.preprocessor.init_vectors)(tokens_input)
+
+
+    def build_sequential_doc_model(self):
+        #self.document_model = Sequential()
+        m = Sequential()
+
+        # input layer. this is a matrix with dimensions:
+        #       (max_doc_length x max_sent_length)
+        #
+        m.add(Dense(100, input_shape=(p.max_sent_len,)))
+
+        #pass 
 
     def build_doc_model3(self):
         model = Sequential()
 
+        # 32 is just n_filters; 1 is n_gram
+        nb_feature_maps = n_filters = 32
+        
+        maxlen = self.preprocessor.max_sent_len
+        
+        conv_filters = []
+        for n_gram in self.ngram_filters:
+            sequential = Sequential()
+            conv_filters.append(sequential)
+
+            sequential.add(Embedding(self.preprocessor.max_features, self.preprocessor.embedding_dims))
+            sequential.add(Reshape(1, maxlen, self.preprocessor.embedding_dims))
+            sequential.add(Convolution2D(nb_feature_maps, 1, n_gram, self.preprocessor.embedding_dims))
+            sequential.add(Activation("relu"))
+            sequential.add(MaxPooling2D(poolsize=(maxlen - n_gram + 1, 1)))
+            sequential.add(Flatten())
+
+        model = Sequential()
+        model.add(Merge(conv_filters, mode='concat'))
+        model.add(Dropout(0.5))
+        model.add(Dense(nb_feature_maps * len(conv_filters), 1))
+        model.add(Activation("sigmoid"))
+
+                '''
+        convolutions = []
+        for n_gram in self.ngram_filters:
+            cur_conv = Convolution2D(n_filters, 1, n_gram, 
+                                        input_shape=(1, p.max_doc_len, p.max_sent_len),
+                                        activation='relu', border_mode='valid')
+
+            #Convolution1D(nb_filter=self.nb_filter,
+            #                             filter_length=n_gram,
+            #                             border_mode='valid',
+            #                             activation='relu',
+            #                             subsample_length=1,
+            #                             input_dim=self.preprocessor.embedding_dims,
+            #                             input_length=self.preprocessor.max_sent_len)(x)
+            # pool
+            one_max = MaxPooling1D(pool_length=self.preprocessor.max_sent_len - n_gram + 1)(cur_conv)
+            flattened = Flatten()(one_max)
+            convolutions.append(flattened)
+
+        '''
+
+        #model.add(
+        #    Convolution2D(n_filters, 1, n_gram, 
+        #    input_shape=(1, p.max_doc_len, p.max_sent_len))
+
+        # get vectors for each sentence
+        #MaxPooling1D(pool_length=self.preprocessor.max_sent_len - n_gram + 1)
+
+
+
+        #one_max = MaxPooling1D(pool_length=self.preprocessor.max_sent_len - n_gram + 1)(cur_conv)
+
+        '''
         document_input = Input(name='input', 
             shape=(None, self.preprocessor.max_doc_len, 
                    self.preprocessor.max_sent_len), dtype='int32')
@@ -285,8 +402,8 @@ class RationaleCNN:
                              input_shape=(1,
                                 self.preprocessor.max_doc_len,
                                 self.preprocessor.embedding_dims,
-                             )(document_input)
-
+                             ))(document_input)
+        '''
     def build_doc_model2(self):
         document_input = Input(name='input', 
             shape=(self.preprocessor.max_doc_len, 
@@ -352,7 +469,8 @@ class RationaleCNN:
         Builds the *document* level model, which uses the sentence level model to inform
         its predictions.
         '''
-        tokens_input = Input(name='input', shape=(p.max_doc_len, p.max_sent_len,), dtype='int32')
+        tokens_input = Input(name='input', shape=(None, self.preprocessor.max_doc_len, 
+                                self.preprocessor.max_sent_len,), dtype='int32')
         
         x = Embedding(self.preprocessor.max_features, self.preprocessor.embedding_dims, 
                       input_length=self.preprocessor.max_sent_len, 
