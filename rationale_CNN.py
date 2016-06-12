@@ -26,9 +26,9 @@ from keras.preprocessing import sequence
 from keras.engine.topology import Layer
 from keras.preprocessing.sequence import pad_sequences
 from keras.models import Graph
-from keras.layers.core import Dense, Dropout, Activation, Flatten, Merge
+from keras.layers.core import Dense, Dropout, Activation, Flatten, Merge, Reshape, Permute, Lambda
 from keras.layers.embeddings import Embedding
-from keras.layers.convolutional import Convolution1D, Convolution2D, MaxPooling1D
+from keras.layers.convolutional import Convolution1D, Convolution2D, MaxPooling1D, MaxPooling2D
 from keras.datasets import imdb
 from keras.utils.np_utils import accuracy
 from keras.preprocessing.text import text_to_word_sequence, Tokenizer
@@ -118,6 +118,21 @@ class RationaleCNN:
 
         #self.build_model() # build model
         #self.train_sentence_model()
+
+    @staticmethod
+    def weighted_sum(X):
+        # @TODO.. add sentence preds!
+        return K.sum(X, axis=0) # I *think* axis 0 is correct...
+
+    @staticmethod
+    def weighted_sum_output_shape(input_shape):
+        # expects something like (None, max_doc_len, num_features) 
+        shape = list(input_shape)
+        #assert len(shape) == 2 # not sure if correct...
+        #print len(shape)
+        print("shape: %s" % shape)
+        # (1 x num_features)
+        return tuple((1, shape[-1]))
 
     @staticmethod
     def balanced_sample(X, y):
@@ -236,10 +251,7 @@ class RationaleCNN:
         return self.sentence_model 
 
 
-    def weighted_sum(x, probs):
-        pass 
-
-
+   
 
     def build_doc_model_fixed(self):
         # no magic here.
@@ -355,7 +367,7 @@ class RationaleCNN:
         model.add(Dense(nb_feature_maps * len(conv_filters), 1))
         model.add(Activation("sigmoid"))
 
-                '''
+        '''
         convolutions = []
         for n_gram in self.ngram_filters:
             cur_conv = Convolution2D(n_filters, 1, n_gram, 
@@ -464,20 +476,105 @@ class RationaleCNN:
         self.sentence_model = Model(input=tokens_input, output=output)
         '''
 
+
+    '''
+    In [137]: model.summary()
+    ____________________________________________________________________________________________________
+    Layer (type)                       Output Shape        Param #     Connected to                     
+    ====================================================================================================
+    input (InputLayer)                 (None, 500, 50)     0                                            
+    ____________________________________________________________________________________________________
+    reshape_16 (Reshape)               (None, 25000)       0           input[0][0]                      
+    ____________________________________________________________________________________________________
+    embedding_12 (Embedding)           (None, 25000, 200)  2000000     reshape_16[0][0]                 
+    ____________________________________________________________________________________________________
+    reshape_17 (Reshape)               (None, 500, 10000)  0           embedding_12[0][0]               
+    ____________________________________________________________________________________________________
+    reshape_18 (Reshape)               (None, 1, 500, 100000           reshape_17[0][0]                 
+    ____________________________________________________________________________________________________
+    convolution2d_4 (Convolution2D)    (None, 32, 500, 50) 6432        reshape_18[0][0]                 
+    ____________________________________________________________________________________________________
+    maxpooling2d_1 (MaxPooling2D)      (None, 32, 500, 1)  0           convolution2d_4[0][0]            
+    ____________________________________________________________________________________________________
+    permute_2 (Permute)                (None, 1, 500, 32)  0           maxpooling2d_1[0][0]             
+    ____________________________________________________________________________________________________
+    reshape_19 (Reshape)               (None, 500, 32)     0           permute_2[0][0]                  
+    =====================================================================================
+    '''
+    def build_doc_model_clean(self, n_filters=32):
+        # input dim is (max_doc_len x max_sent_len) -- eliding the batch size
+        tokens_input = Input(name='input', 
+                            shape=(self.preprocessor.max_doc_len, self.preprocessor.max_sent_len), 
+                            dtype='int32')
+        # flatten; create a very wide matrix to hand to embedding layer
+        tokens_reshaped = Reshape([self.preprocessor.max_doc_len*self.preprocessor.max_sent_len])(tokens_input)
+        # embed the tokens; output will be (p.max_doc_len*p.max_sent_len x embedding_dims)
+        x = Embedding(self.preprocessor.max_features, self.preprocessor.embedding_dims, 
+                        weights=self.preprocessor.init_vectors)(tokens_reshaped)
+
+        # reshape to preserve document structure; each doc will now be a
+        # a row in this matrix
+        x = Reshape((1, self.preprocessor.max_doc_len, 
+                     self.preprocessor.max_sent_len*self.preprocessor.embedding_dims))(x)
+
+        #x = Reshape((1, p.max_doc_len, p.max_sent_len*p.embedding_dims))(x)
+
+        x = Dropout(0.1)(x)
+
+        ####
+        # @TODO wrap in loop to include all n_grams!
+        n_gram = 1 # tmp
+        
+
+        cur_conv = Convolution2D(n_filters, 1, 
+                                 n_gram*self.preprocessor.embedding_dims, 
+                                 subsample=(1, self.preprocessor.embedding_dims))(x)
+        # model = Model(input=tokens_input, output=cur_conv)
+
+        # this output (n_filters x max_doc_len x 1)
+        one_max = MaxPooling2D(pool_size=(1, self.preprocessor.max_sent_len - n_gram + 1))(cur_conv)
+        # flip around, to get (1 x max_doc_len x n_filters)
+        permuted = Permute((3,2,1)) (one_max)
+        # drop extra dimension
+        r = Reshape((self.preprocessor.max_doc_len, n_filters))(permuted)
+        # now we want to average the sentence vectors!
+        x_doc = Lambda(RationaleCNN.weighted_sum, 
+                        output_shape=RationaleCNN.weighted_sum_output_shape)(r)
+
+        # finally, the sigmoid layer for classification
+        y_hat = Dense(1, activation="softmax")(x_doc)
+        model = Model(input=tokens_input, output=x_doc)
+        return model 
+        #model.summary()
+
     def build_doc_model(self):
         '''
         Builds the *document* level model, which uses the sentence level model to inform
         its predictions.
         '''
-        tokens_input = Input(name='input', shape=(None, self.preprocessor.max_doc_len, 
-                                self.preprocessor.max_sent_len,), dtype='int32')
+        #tokens_input = Input(name='input', shape=(None, 
+        #                        self.preprocessor.max_doc_len, 
+        #                        self.preprocessor.max_sent_len), dtype='int32')
+        tokens_input = Input(name='input', shape=(p.max_doc_len, p.max_sent_len), dtype='int32')
+
+        tokens_reshaped = Reshape([p.max_doc_len*p.max_sent_len])(tokens_input)
+
+        x = Embedding(p.max_features, p.embedding_dims, weights=p.init_vectors)(tokens_reshaped)
+        #tokens_reshaped = Reshape((self.preprocessor.max_doc_len, 
+        #                           self.preprocessor.max_sent_len*self.preprocessor.embedding_dims))(tokens_input)
+
+        # so this will be (max_doc_len, max_sent_len, wv_size), i think
+        #x = Embedding(self.preprocessor.max_features, self.preprocessor.embedding_dims, 
+        #        weights=self.preprocessor.init_vectors)(tokens_input)
+                      #input_length=self.preprocessor.max_sent_len, 
+                      #weights=self.preprocessor.init_vectors)(tokens_input)
         
-        x = Embedding(self.preprocessor.max_features, self.preprocessor.embedding_dims, 
-                      input_length=self.preprocessor.max_sent_len, 
-                      weights=self.preprocessor.init_vectors)(tokens_input)
-        
+        x = Reshape((p.max_doc_len, p.max_sent_len*p.embedding_dims))(x)
         x = Dropout(0.1)(x)
 
+        #  (max_doc_len, max_sent_len, wv_size) -> (max_doc_len, max_sent_len * wv_size)
+        #r = Reshape(self.preprocessor.max_doc_len, 
+        #            self.preprocessor.max_sent_len * self.preprocessor.embedding_dims)(x)
         convolutions = []
         for n_gram in self.ngram_filters:
             #cur_conv = Convolution1D(nb_filter=self.nb_filter, filter_length=n_gram)
@@ -503,6 +600,7 @@ class RationaleCNN:
             
 
             # pool
+            #one_max = MaxPooling1D(pool_length=self.preprocessor.max_sent_len - n_gram + 1)(cur_conv)
             one_max = MaxPooling1D(pool_length=self.preprocessor.max_sent_len - n_gram + 1)(cur_conv)
             flattened = Flatten()(one_max)
             convolutions.append(flattened)
