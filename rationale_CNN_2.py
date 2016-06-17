@@ -40,7 +40,7 @@ from keras.callbacks import ModelCheckpoint
 
 class RationaleCNN:
 
-    def __init__(self, preprocessor, filters=None, n_filters=100, dropout=0.0):
+    def __init__(self, preprocessor, filters=None, n_filters=32, dropout=0.0):
         '''
         parameters
         ---
@@ -53,7 +53,7 @@ class RationaleCNN:
         else:
             self.ngram_filters = filters 
 
-        self.nb_filter = n_filters 
+        self.n_filters = n_filters 
         self.dropout = dropout
         self.sentence_model_trained = False 
 
@@ -84,7 +84,23 @@ class RationaleCNN:
         np.random.shuffle(train_indices) # why not
         return X[train_indices,:], y[train_indices]
 
-    def build_doc_model(self, n_filters=32):
+    def get_conv_layers_from_sentence_model():
+        layers_to_weights = {}
+        for ngram in self.ngram_filters:
+            layer_name = "conv_" + str(ngram)
+            cur_conv_layer = self.sentence_model.get_layer(layer_name)
+            weights, biases = cur_conv_layer.get_weights()
+
+            # here it gets tricky because we need
+            # so, e.g., (32 x 200 x 3 x 1) -> (32 x 3 x 200 x 1)
+            # we do this because reshape by default iterates over
+            # the last dimension fastest
+            # swapped = np.swapaxes(X, 1, 2)
+            # Xp = swapped.reshape(32, 1, 1, 600)
+
+    def build_doc_model(self):
+        #assert self.sentence_model_trained
+
         # input dim is (max_doc_len x max_sent_len) -- eliding the batch size
         tokens_input = Input(name='input', 
                             shape=(self.preprocessor.max_doc_len, self.preprocessor.max_sent_len), 
@@ -92,46 +108,80 @@ class RationaleCNN:
         # flatten; create a very wide matrix to hand to embedding layer
         tokens_reshaped = Reshape([self.preprocessor.max_doc_len*self.preprocessor.max_sent_len])(tokens_input)
         # embed the tokens; output will be (p.max_doc_len*p.max_sent_len x embedding_dims)
+        # here we should initialize with weights from sentence model embedding layer!
+
+
+        ### 
+        # getting weights for initialization
         x = Embedding(self.preprocessor.max_features, self.preprocessor.embedding_dims, 
-                        weights=self.preprocessor.init_vectors)(tokens_reshaped)
+                        weights=self.sentence_model.get_layer("embedding").get_weights(),
+                        #weights=self.preprocessor.init_vectors, 
+                        name="embedding")(tokens_reshaped)
 
         # reshape to preserve document structure; each doc will now be a
         # a row in this matrix
         x = Reshape((1, self.preprocessor.max_doc_len, 
-                     self.preprocessor.max_sent_len*self.preprocessor.embedding_dims))(x)
+                     self.preprocessor.max_sent_len*self.preprocessor.embedding_dims), 
+                     name="reshape")(x)
 
-        #x = Reshape((1, p.max_doc_len, p.max_sent_len*p.embedding_dims))(x)
+        x = Dropout(0.1, name="dropout")(x)
 
-        x = Dropout(0.1)(x)
-
-        ####
-        # @TODO wrap in loop to include all n_grams!
-        n_gram = 1 # tmp
-        
-
-        cur_conv = Convolution2D(n_filters, 1, 
-                                 n_gram*self.preprocessor.embedding_dims, 
-                                 subsample=(1, self.preprocessor.embedding_dims))(x)
-        # model = Model(input=tokens_input, output=cur_conv)
-
-        # this output (n_filters x max_doc_len x 1)
-        one_max = MaxPooling2D(pool_size=(1, self.preprocessor.max_sent_len - n_gram + 1))(cur_conv)
-        # flip around, to get (1 x max_doc_len x n_filters)
-        permuted = Permute((3,2,1)) (one_max)
-        # drop extra dimension
-        r = Reshape((self.preprocessor.max_doc_len, n_filters))(permuted)
+        convolutions = []
+        for n_gram in self.ngram_filters:
 
 
-        # now we want to average the sentence vectors!
+            #import pdb; pdb.set_trace()
+
+            ### here is where we pull out weights
+            layer_name = "conv_" + str(n_gram)
+            cur_conv_layer = self.sentence_model.get_layer(layer_name)
+            weights, biases = cur_conv_layer.get_weights()
+            # here it gets a bit tricky; we need dims 
+            #       (nb_filters x 1 x 1 x (n_gram*embedding_dim))
+            # for 2d conv; our 1d conv model, though, will have
+            #       (nb_filters x embedding_dim x n_gram x 1)
+            # need to reshape this. but first need to swap around
+            # axes due to how reshape works (it iterates over last 
+            # dimension first). in particular, e.g.,:
+            #       (32 x 200 x 3 x 1) -> (32 x 3 x 200 x 1)
+            # swapped = np.swapaxes(X, 1, 2)
+            swapped_weights = np.swapaxes(weights, 1, 2)
+            init_weights = swapped_weights.reshape(self.n_filters, 
+                            1, 1, n_gram*self.preprocessor.embedding_dims)
+
+            cur_conv = Convolution2D(self.n_filters, 1, 
+                                     n_gram*self.preprocessor.embedding_dims, 
+                                     subsample=(1, self.preprocessor.embedding_dims),
+                                     name="conv2d_"+str(n_gram),
+                                     weights=[init_weights, biases])(x)
+
+            # this output (n_filters x max_doc_len x 1)
+            one_max = MaxPooling2D(pool_size=(1, self.preprocessor.max_sent_len - n_gram + 1), 
+                                   name="pooling_"+str(n_gram))(cur_conv)
+
+            # flip around, to get (1 x max_doc_len x n_filters)
+            permuted = Permute((3,2,1), name="permute_"+str(n_gram)) (one_max)
+            
+            # drop extra dimension
+            r = Reshape((self.preprocessor.max_doc_len, self.n_filters), 
+                            name="conv_"+str(n_gram))(permuted)
+            
+            convolutions.append(r)
+
+        # merge the filter size convolutions
+        r = merge(convolutions, name="sentence_vectors")
+
+        # now we take a weighted sum of the sentence vectors
+        # to induce a document representation
         x_doc = Lambda(RationaleCNN.weighted_sum, 
-                        output_shape=RationaleCNN.weighted_sum_output_shape)(r)
+                        output_shape=RationaleCNN.weighted_sum_output_shape, 
+                        name="weighted_doc_vector")(r)
 
         # finally, the sigmoid layer for classification
-        y_hat = Dense(1, activation="softmax")(x_doc)
+        y_hat = Dense(1, activation="softmax", name="document_prediction")(x_doc)
         model = Model(input=tokens_input, output=x_doc)
         return model 
-        #model.summary()
-
+        
 
     def train(self, X_train, y_train, X_val=None, y_val=None,
                 nb_epoch=5, batch_size=32, optimizer='adam'):
@@ -156,6 +206,46 @@ class RationaleCNN:
                 batch_size=batch_size, nb_epoch=nb_epoch, 
                 verbose=2, callbacks=[checkpointer])
 
+
+    '''
+    def build_sentence_model(self):
+
+        # input dim is (max_doc_len x max_sent_len) -- eliding the batch size
+        tokens_input = Input(name='input', 
+                            shape=(self.preprocessor.max_sent_len,), 
+                            dtype='int32')
+
+        # embed the tokens; output will be (p.max_doc_len*p.max_sent_len x embedding_dims)
+        x = Embedding(self.preprocessor.max_features, self.preprocessor.embedding_dims, 
+                        weights=self.preprocessor.init_vectors, name="embedding")(tokens_input)
+
+        x = Dropout(0.1, name="dropout")(x)
+
+        convolutions = []
+        for n_gram in self.ngram_filters:
+            cur_conv = Convolution2D(self.n_filters, 1, 
+                                     n_gram*self.preprocessor.embedding_dims, 
+                                     subsample=(1, self.preprocessor.embedding_dims),
+                                     name="conv2d_"+str(n_gram))(x)
+
+            # this output (n_filters x max_doc_len x 1)
+            one_max = MaxPooling2D(pool_size=(1, self.preprocessor.max_sent_len - n_gram + 1), 
+                                   name="pooling_"+str(n_gram))(cur_conv)
+
+            # flip around, to get (1 x max_doc_len x n_filters)
+            permuted = Permute((3,2,1), name="permute_"+str(n_gram)) (one_max)
+            
+            # drop extra dimension
+            r = Reshape((self.preprocessor.max_doc_len, self.n_filters), 
+                            name="conv_"+str(n_gram))(permuted)
+            
+            convolutions.append(r)
+
+        # merge the filter size convolutions
+        r = merge(convolutions, name="sentence_vectors")
+
+        # now the classification layer...
+    '''
    
     def build_sentence_model(self):
         ''' 
@@ -164,6 +254,7 @@ class RationaleCNN:
         '''
         tokens_input = Input(name='input', shape=(self.preprocessor.max_sent_len,), dtype='int32')
         x = Embedding(self.preprocessor.max_features, self.preprocessor.embedding_dims, 
+                      name="embedding",
                       input_length=self.preprocessor.max_sent_len, 
                       weights=self.preprocessor.init_vectors)(tokens_input)
         
@@ -171,7 +262,8 @@ class RationaleCNN:
 
         convolutions = []
         for n_gram in self.ngram_filters:
-            cur_conv = Convolution1D(nb_filter=self.nb_filter,
+            cur_conv = Convolution1D(name="conv_" + str(n_gram), 
+                                         nb_filter=self.n_filters,
                                          filter_length=n_gram,
                                          border_mode='valid',
                                          activation='relu',
@@ -184,7 +276,7 @@ class RationaleCNN:
             convolutions.append(flattened)
 
         sentence_vector = merge(convolutions, name="sentence_vector") # hang on to this layer!
-        output = Dense(3, activation="softmax")(sentence_vector)
+        output = Dense(3, activation="softmax", name="sentence_prediction")(sentence_vector)
 
         self.sentence_model = Model(input=tokens_input, output=output)
         print("model built")
